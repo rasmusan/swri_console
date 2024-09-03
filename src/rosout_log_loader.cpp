@@ -56,18 +56,45 @@ namespace swri_console
 
   void RosoutLogLoader::loadRosLog(const QString& logfile_name)
   {
+    // Read name of log
     std::string std_string_logfile = logfile_name.toStdString();
+    unsigned found = std_string_logfile.find_last_of("/\\");
+    std::string log_name = std_string_logfile.substr(found + 1);
+
+    // Load log lines
     std::ifstream logfile(std_string_logfile.c_str());
-    for( std::string line; getline( logfile, line ); )
+    rcl_interfaces::msg::Log last_log;
+    while (true)
     {
+      std::string line;
+      auto & line_exists = getline(logfile, line);
+
+      // Parse line
       rcl_interfaces::msg::Log log;
-      unsigned found = std_string_logfile.find_last_of("/\\");
-      log.name = std_string_logfile.substr(found+1);
+      log.name = log_name;
       int result = parseLine(line, &log);
-      if (result == 0)
-      {
-        rcl_interfaces::msg::Log::SharedPtr log_ptr = std::make_shared<rcl_interfaces::msg::Log>(log);
-        emit logReceived(log_ptr);
+      if (!line_exists) {
+        if (!last_log.msg.empty()) {
+          // Make sure the last log message is emitted.
+          rcl_interfaces::msg::Log::SharedPtr log_ptr = std::make_shared<rcl_interfaces::msg::Log>(last_log);
+          emit logReceived(log_ptr);
+        }
+        break;
+      }
+
+      if (result == 0) {
+        // 'log' starts a new log message.
+        if (!last_log.msg.empty()) {
+          //  Emit the last log message
+          rcl_interfaces::msg::Log::SharedPtr log_ptr = std::make_shared<rcl_interfaces::msg::Log>(last_log);
+          emit logReceived(log_ptr);
+        }
+
+        // Save the new log message for the next iteration.
+        last_log = log;
+      } else if (result == 1) {
+        // Parsing failed. We assume that the line is a continuation of the last log message.
+        last_log.msg += "\n" + log.msg;
       }
     }
     emit finishedReading();
@@ -245,7 +272,7 @@ namespace swri_console
     log->line = 0;
     log->msg = line;
     log->name = log->name + "-unparsed";
-    return 0;
+    return 1;
   }
 
   rcl_interfaces::msg::Log::_level_type RosoutLogLoader::level_string_to_level_type(const std::string& level_str)
